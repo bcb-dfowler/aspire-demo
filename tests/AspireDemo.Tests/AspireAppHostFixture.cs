@@ -19,7 +19,8 @@ public sealed class AspireAppHostFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         var cancellationToken = CancellationToken.None;
-        var appHost = await DistributedApplicationTestingBuilder.CreateAsync<Projects.AspireDemo_AppHost>(cancellationToken);
+        var appHost = await DistributedApplicationTestingBuilder
+            .CreateAsync<Projects.AspireDemo_AppHost>(cancellationToken);
         appHost.Services.AddLogging(logging =>
         {
             logging.SetMinimumLevel(LogLevel.Debug);

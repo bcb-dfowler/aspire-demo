@@ -12,14 +12,14 @@ public class ForecastEndpointTests(AspireAppHostFixture fixture) : IClassFixture
 
         // Program the third-party API stub at runtime via WireMock's admin API - no static
         // mapping files. This is what makes the "external API" respond the way this test expects.
-        var stubbedMapping = new MappingModelBuilder()
-            .WithRequest(request => request.UsingGet().WithPath("/forecast"))
-            .WithResponse(response => response.WithStatusCode(200).WithBodyAsJson(new[]
-            {
-                new { date = "2026-07-22", temperatureC = 21, summary = "Mild" }
-            }))
-            .Build();
-        await fixture.WireMockAdmin.PostMappingAsync(stubbedMapping, cancellationToken);
+        await using var mapping = await fixture.WireMockAdmin.PostScopedMappingAsync(builder =>
+        {
+            builder.WithRequest(request => request.UsingGet().WithPath("/forecast"))
+                .WithResponse(response => response.WithStatusCode(200).WithBodyAsJson(new[]
+                {
+                    new { date = "2026-07-22", temperatureC = 21, summary = "Mild" }
+                }));
+        }, cancellationToken);
 
         using var httpClient = fixture.App.CreateHttpClient("api");
         using var response = await httpClient.GetAsync("/forecast", cancellationToken);
