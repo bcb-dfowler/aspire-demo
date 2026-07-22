@@ -137,9 +137,3 @@ Either way, Docker Desktop's Linux engine must be running (WireMock always runs 
 
 Both modes were verified end-to-end while building this repo: container-parity mode (`dotnet test`
 against the published image) passes; fast/process mode passes once the dev cert is trusted.
-
-## Known warnings
-
-`dotnet new webapi`'s default template currently pulls in `Microsoft.OpenApi 2.0.0`, which NuGet
-flags with a `NU1903` advisory (GHSA-v5pm-xwqc-g5wc). It's a template default, not something this
-demo added; bump the package if you take this further.
