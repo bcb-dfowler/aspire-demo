@@ -1,0 +1,17 @@
+# pubsub.redis - order-svc publishes order-lifecycle events here; notification-svc subscribes to
+# them via a streaming subscription (see AspireDemo.NotificationService/Program.cs).
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: pubsub
+spec:
+  type: pubsub.redis
+  version: v1
+  # Generous: this AppHost cold-boots 14 containers together, and Redis's default 5s init
+  # timeout is routinely too short for that under real machine load.
+  initTimeout: 30s
+  metadata:
+    - name: redisHost
+      value: redis:6379
+    - name: redisPassword
+      value: ""

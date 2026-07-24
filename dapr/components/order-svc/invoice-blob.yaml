@@ -1,0 +1,24 @@
+# bindings.azure.blobstorage output binding - order-svc writes the invoice document here. Points
+# at the Azurite emulator using its well-known local development account (see
+# AspireDemo.Api/GenerateInvoiceActivity.cs). Only mounted into order-svc's sidecar.
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: invoice-blob
+spec:
+  type: bindings.azure.blobstorage
+  version: v1
+  # Generous: this AppHost cold-boots 14 containers together, and Azurite's default 5s init
+  # timeout is routinely too short for that under real machine load.
+  initTimeout: 30s
+  metadata:
+    - name: accountName
+      value: devstoreaccount1
+    - name: accountKey
+      value: Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
+    - name: endpoint
+      value: http://storage:10000
+    - name: containerName
+      value: invoices
+    - name: direction
+      value: output

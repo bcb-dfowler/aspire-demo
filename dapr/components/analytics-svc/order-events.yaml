@@ -1,0 +1,29 @@
+# bindings.kafka *input* binding - Dapr calls POST /order-events on this app for each message on
+# the "orders" topic (see AspireDemo.AnalyticsService/Program.cs). Input-only, and only mounted
+# into analytics-svc's sidecar - see the note in dapr/components/order-svc/order-events.yaml for
+# why the output side is a separate component file rather than one shared bidirectional component.
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: order-events
+spec:
+  type: bindings.kafka
+  version: v1
+  # Generous: this AppHost cold-boots 14 containers together, and Kafka's default 5s init
+  # timeout is routinely too short for that under real machine load.
+  initTimeout: 30s
+  metadata:
+    # Aspire's Kafka integration exposes 3 listeners: PLAINTEXT (broker-internal loopback),
+    # PLAINTEXT_HOST (for host/.NET-client access, advertised as localhost:<random-mapped-port>
+    # - unreachable from other containers), and PLAINTEXT_INTERNAL on port 9093 (advertised as
+    # "kafka:9093") - that last one is the only listener other containers like this can use.
+    - name: brokers
+      value: kafka:9093
+    - name: authType
+      value: none
+    - name: topics
+      value: orders
+    - name: consumerGroup
+      value: analytics
+    - name: direction
+      value: input

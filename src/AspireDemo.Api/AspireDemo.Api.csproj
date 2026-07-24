@@ -15,4 +15,9 @@
     <ProjectReference Include="..\AspireDemo.ServiceDefaults\AspireDemo.ServiceDefaults.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Dapr.AspNetCore" Version="1.18.4" />
+    <PackageReference Include="Dapr.Workflow" Version="1.18.4" />
+  </ItemGroup>
+
 </Project>

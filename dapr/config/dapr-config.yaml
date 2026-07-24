@@ -1,0 +1,11 @@
+# Enables tracing so Dapr sidecar spans join the app spans in one distributed trace. No otel
+# endpoint is set here - Aspire auto-injects OTEL_EXPORTER_OTLP_ENDPOINT into every container
+# resource it manages (including these raw daprd containers), and Dapr's OTel exporter picks that
+# env var up directly, so sidecar spans land in the same Aspire dashboard trace view as the apps'.
+apiVersion: dapr.io/v1alpha1
+kind: Configuration
+metadata:
+  name: dapr-config
+spec:
+  tracing:
+    samplingRate: "1"

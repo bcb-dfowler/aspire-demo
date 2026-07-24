@@ -2,9 +2,16 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AspireDemo.Api\AspireDemo.Api.csproj" />
+    <ProjectReference Include="..\AspireDemo.InventoryService\AspireDemo.InventoryService.csproj" />
+    <ProjectReference Include="..\AspireDemo.PaymentService\AspireDemo.PaymentService.csproj" />
+    <ProjectReference Include="..\AspireDemo.AnalyticsService\AspireDemo.AnalyticsService.csproj" />
+    <ProjectReference Include="..\AspireDemo.NotificationService\AspireDemo.NotificationService.csproj" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.Azure.Storage" Version="13.4.6" />
+    <PackageReference Include="Aspire.Hosting.Kafka" Version="13.4.6" />
+    <PackageReference Include="Aspire.Hosting.Redis" Version="13.4.6" />
     <PackageReference Include="WireMock.Net.Aspire" Version="2.13.0" />
   </ItemGroup>
 

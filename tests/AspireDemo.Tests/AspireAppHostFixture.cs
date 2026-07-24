@@ -10,7 +10,9 @@ namespace AspireDemo.Tests.Tests;
 /// </summary>
 public sealed class AspireAppHostFixture : IAsyncLifetime
 {
-    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(60);
+    // Generous: cold-starts 14 containers (5 apps, 5 sidecars, redis, kafka, azurite, placement,
+    // scheduler), including image pulls the first time.
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(5);
 
     public DistributedApplication App { get; private set; } = null!;
 

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\AspireDemo.ServiceDefaults\AspireDemo.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapr.AspNetCore" Version="1.18.4" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Pins the image name/tag produced by `dotnet publish -t:PublishContainer`
+         (see README) so the AppHost's AddContainer("payment-svc", "aspiredemo-payment-svc", "latest")
+         reference is deterministic. -->
+    <ContainerRepository>aspiredemo-payment-svc</ContainerRepository>
+    <ContainerImageTag>latest</ContainerImageTag>
+  </PropertyGroup>
+
+</Project>

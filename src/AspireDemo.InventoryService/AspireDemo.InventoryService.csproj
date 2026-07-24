@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\AspireDemo.ServiceDefaults\AspireDemo.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapr.Client" Version="1.18.4" />
+    <PackageReference Include="Dapr.Workflow" Version="1.18.4" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Pins the image name/tag produced by `dotnet publish -t:PublishContainer`
+         (see README) so the AppHost's AddContainer("inventory-svc", "aspiredemo-inventory-svc", "latest")
+         reference is deterministic. -->
+    <ContainerRepository>aspiredemo-inventory-svc</ContainerRepository>
+    <ContainerImageTag>latest</ContainerImageTag>
+  </PropertyGroup>
+
+</Project>

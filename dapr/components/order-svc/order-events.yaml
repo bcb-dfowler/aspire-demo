@@ -1,0 +1,29 @@
+# bindings.kafka *output* binding - order-svc streams order events to the "orders" topic (see
+# AspireDemo.Api/PublishOrderEventActivity.cs). Output-only: kept in a separate directory from
+# analytics-svc's input binding of the same name (dapr/components/analytics-svc/order-events.yaml)
+# so only analytics-svc's sidecar joins the Kafka consumer group - if every sidecar loaded the
+# same input+output component, every app (not just analytics-svc) would compete for partitions in
+# that consumer group.
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: order-events
+spec:
+  type: bindings.kafka
+  version: v1
+  # Generous: this AppHost cold-boots 14 containers together, and Kafka's default 5s init
+  # timeout is routinely too short for that under real machine load.
+  initTimeout: 30s
+  metadata:
+    # Aspire's Kafka integration exposes 3 listeners: PLAINTEXT (broker-internal loopback),
+    # PLAINTEXT_HOST (for host/.NET-client access, advertised as localhost:<random-mapped-port>
+    # - unreachable from other containers), and PLAINTEXT_INTERNAL on port 9093 (advertised as
+    # "kafka:9093") - that last one is the only listener other containers like this can use.
+    - name: brokers
+      value: kafka:9093
+    - name: authType
+      value: none
+    - name: publishTopic
+      value: orders
+    - name: direction
+      value: output

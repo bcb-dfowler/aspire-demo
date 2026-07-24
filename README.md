@@ -1,30 +1,123 @@
-# AspireDemo
+# Dapr Showcase
 
-A small .NET Aspire demo: a Minimal API that calls a third-party API, where that third-party
-API is stood in for by a [WireMock](https://wiremock.org/dotnet/) container, all orchestrated
-by an Aspire AppHost.
+A Dapr showcase orchestrated locally by .NET Aspire: an **order-fulfillment saga** that exercises
+five Dapr building blocks - state management, pub/sub, workflow, an Azure Storage binding, and a
+Kafka binding - using only locally-runnable containers. No cloud services, no Dapr CLI, no
+Node.js. Prerequisites are Docker Desktop (Linux), the .NET 10 SDK, and the Aspire CLI.
 
-- **`src/AspireDemo.Api`** — ASP.NET Core Minimal API. Exposes `GET /forecast`, which calls out
-  to a third-party weather API and returns the result.
-- **`src/AspireDemo.AppHost`** — the Aspire AppHost. Orchestrates the API and a WireMock
-  container that plays the part of the third-party API.
-- **`src/AspireDemo.ServiceDefaults`** — shared Aspire service-defaults (OpenTelemetry, health
-  checks, service discovery, resilience) referenced by the API.
-- **`tests/AspireDemo.Tests`** — an Aspire integration test (xUnit) that boots the whole AppHost,
-  configures the WireMock stub via its **admin API** (no static mapping files), and asserts the
-  API's `/forecast` endpoint reflects it.
+## Scenario
+
+`POST /orders` on **order-svc** kicks off a Dapr Workflow saga: reserve inventory -> charge
+payment -> get a shipping quote from a third-party carrier API (stood in for by a
+[WireMock](https://wiremock.org/dotnet/) container) -> write an invoice -> stream the order event
+-> mark shipped. If payment fails (or stock is insufficient), the saga compensates by refunding
+and/or releasing the reserved stock.
+
+| Dapr building block | Backing container | Role in the demo |
+|---|---|---|
+| **State management** | Redis | Order state (order-svc), stock levels (inventory-svc), and the actor state store backing Dapr Workflow |
+| **Pub/sub** | Redis | order-svc publishes order-lifecycle events; notification-svc subscribes via a streaming subscription |
+| **Workflow** | Dapr runtime (placement + scheduler) | order-svc hosts the fulfillment saga; inventory-svc hosts its own reserve/release-stock workflows, started remotely by order-svc via inventory-svc's sidecar HTTP API |
+| **Azure Storage binding** | Azurite | `bindings.azure.blobstorage` **output** binding writes an invoice document to a blob container |
+| **Kafka binding** | Redpanda-compatible Kafka (Confluent local image, via `Aspire.Hosting.Kafka`) | order-svc's **output** binding streams order events to a topic; analytics-svc's **input** binding consumes and aggregates them |
+
+## Services
+
+| Service | Kind | Dapr features exercised |
+|---|---|---|
+| **`src/AspireDemo.Api`** (app-id `api`, the order-svc / front door) | ASP.NET Core minimal API | `POST /orders`, `GET /orders/{id}`; hosts the fulfillment **workflow**; **state** (order); **pub/sub** publish; **service invocation** -> payment-svc; calls inventory-svc's sidecar workflow API directly; **blob output binding** (invoice); **Kafka output binding** (order events); calls WireMock for the shipping quote |
+| **`src/AspireDemo.InventoryService`** (app-id `inventory-svc`) | Plain console app, no HTTP listener | **State** (stock, seeded on startup); hosts its own reserve/release-stock **workflows**, started remotely by order-svc via this app's own Dapr sidecar HTTP API (see below) |
+| **`src/AspireDemo.PaymentService`** (app-id `payment-svc`) | ASP.NET Core minimal API | `POST /charge`, `POST /refund`; a Dapr **service-invocation** target; **state** (idempotent charge records) |
+| **`src/AspireDemo.AnalyticsService`** (app-id `analytics-svc`) | ASP.NET Core minimal API | **Kafka input binding** consumer (`POST /order-events`); `GET /stats` exposes a running total |
+| **`src/AspireDemo.NotificationService`** (app-id `notification-svc`) | Plain console app, no HTTP listener | **Pub/sub** subscriber via a Dapr *streaming* subscription (`DaprPublishSubscribeClient.SubscribeAsync`) - logs order-lifecycle events |
+| **`src/AspireDemo.ServiceDefaults`** | Shared library | OpenTelemetry, health checks, service discovery, resilience - referenced by every service above |
+| **wiremock** (AppHost resource `wiremock`) | Container | Stands in for the third-party carrier/shipping-quote API called by the workflow |
+
+### Why some services have no HTTP listener
+
+Dapr service invocation, pub/sub's declarative `/dapr/subscribe` route, and binding *input*
+callbacks all require the sidecar to call back into the app over HTTP - that's the usual reason
+every Dapr app has a web server. Two mechanisms don't:
+
+- **Dapr Workflow** talks to its app over a connection the *app* opens to its *own* sidecar, not
+  the other way around. inventory-svc uses this to host its own reserve/release-stock workflows
+  as a **plain console app**. order-svc's saga starts and awaits those workflows by calling
+  inventory-svc's sidecar's HTTP workflow API directly (`http://inventory-svc-dapr:3500/v1.0/workflows/...`)
+  - a "multi-app workflow" pattern, not service invocation - and reads the result back from the
+    shared Dapr state store, since inventory-svc's workflow writes its outcome there as its last
+    activity (see `AspireDemo.Api/InventoryWorkflowClient.cs` and
+    `AspireDemo.InventoryService/RecordWorkflowResultActivity.cs`).
+- **Streaming pub/sub subscriptions** (`Dapr.Messaging`) are pulled by the app from its sidecar
+  over a long-lived stream, so the app never needs to expose an endpoint either. notification-svc
+  uses this as a **plain console app**.
+
+payment-svc and analytics-svc *are* reached via HTTP (service invocation and a Kafka input
+binding callback, respectively), so they're minimal ASP.NET Core APIs.
+
+## Infrastructure containers (Aspire-managed)
+
+- **Redis** (`Aspire.Hosting.Redis`, `AddRedis("redis").WithPassword(null)`) - state + pub/sub. No
+  password, so the (necessarily static) Dapr component yaml doesn't need to read an
+  Aspire-generated secret.
+- **Kafka** (`Aspire.Hosting.Kafka`, `AddKafka("kafka")`)
+- **Azurite** (`Aspire.Hosting.Azure.Storage`, `AddAzureStorage("storage").RunAsEmulator()`)
+- **placement** (`AddContainer("placement", "daprio/placement", ...)`) - actor placement, required
+  because Dapr Workflow uses actors internally
+- **scheduler** (`AddContainer("scheduler", "daprio/scheduler", ...)`) - workflow reminders (Dapr
+  >= 1.14), backed by a small Aspire-managed volume for its embedded etcd store
+
+Every `daprio/*` image is pinned to the same runtime tag (`DaprRuntimeTag` in `AppHost.cs`),
+matching the `Dapr.*` NuGet package versions used by the .NET projects.
+
+## Dapr components (yaml - the one unavoidable hand-authored config)
+
+Bindings/components can't be scaffolded by a CLI and the binding metadata *must* be yaml. Rather
+than one shared directory mounted into every sidecar, components live under `dapr/components/`
+split by scope, because an *input* binding activates for every sidecar that loads it (it starts
+consuming immediately, regardless of whether the app has a matching route) - if every sidecar
+loaded one bidirectional Kafka component, every app (not just analytics-svc) would compete for
+partitions in the same consumer group:
+
+- `dapr/components/shared/` - mounted into **every** sidecar: `statestore.yaml` (`state.redis`,
+  `actorStateStore: "true"` for Dapr Workflow, `keyPrefix: none` so order-svc and inventory-svc can
+  read/write a shared set of keys) and `pubsub.yaml` (`pubsub.redis`).
+- `dapr/components/order-svc/` - mounted only into order-svc's sidecar: `invoice-blob.yaml`
+  (`bindings.azure.blobstorage`, output, pointed at Azurite's well-known local dev account) and
+  `order-events.yaml` (`bindings.kafka`, **output only**).
+- `dapr/components/analytics-svc/` - mounted only into analytics-svc's sidecar:
+  `order-events.yaml` (`bindings.kafka`, **input only**, `consumerGroup: analytics`).
+- `dapr/config/dapr-config.yaml` - a Dapr `Configuration` enabling tracing
+  (`tracing.samplingRate: "1"`). No otel endpoint is set there - Aspire auto-injects
+  `OTEL_EXPORTER_OTLP_ENDPOINT` into every container resource it manages (including these raw
+  `daprd` containers), and Dapr's OTel exporter reads that env var directly, so sidecar spans land
+  in the same Aspire dashboard trace view as the apps'.
+
+`AppHost.cs`'s `AddDaprSidecar` local function wires the `--resources-path`/bind-mount pairs per
+sidecar (always `shared`, plus `order-svc` or `analytics-svc` where applicable).
+
+## Product catalog & stock seeding
+
+No manual data step. inventory-svc seeds its own Dapr state store on startup, idempotently: it
+checks for a `catalog-seeded` marker key and, if absent, writes a small fixed catalog (4 SKUs:
+`widget-1`, `widget-2`, `gadget-1`, `gadget-2`) via `DaprClient.SaveStateAsync`. The seed set lives
+in `AspireDemo.InventoryService/CatalogSeeder.cs`, so the demo is deterministic and repeatable
+(clear Redis to re-seed).
 
 ## Prerequisites
 
 | Tool | Why | Install |
 |---|---|---|
-| **.NET 10 SDK** | Builds/runs everything; the .NET SDK also builds the API's container image (no Dockerfile) | https://dotnet.microsoft.com/download |
-| **Docker Desktop**, with its **Linux** engine running | Runs the WireMock container and the API's container | https://www.docker.com/products/docker-desktop — after install, make sure it's running and switched to Linux containers (Windows can default to Windows containers) |
+| **.NET 10 SDK** | Builds/runs everything; the .NET SDK also builds each service's container image (no Dockerfile) | https://dotnet.microsoft.com/download |
+| **Docker Desktop**, with its **Linux** engine running | Runs every container in this AppHost (14 in total: 5 apps, 5 `daprd` sidecars, redis, kafka, azurite, placement, scheduler) | https://www.docker.com/products/docker-desktop — after install, make sure it's running and switched to Linux containers |
 | **Aspire CLI** | `aspire run` / `aspire publish` etc. | `dotnet tool install --global Aspire.Cli` (or `irm https://aspire.dev/install.ps1 \| iex`) |
 | **Aspire project templates** | `aspire-apphost`, `aspire-servicedefaults`, `aspire-xunit` templates used to scaffold this repo | `dotnet new install Aspire.ProjectTemplates` |
-| **Trusted ASP.NET Core HTTPS dev cert** | Only needed for [fast/process mode](#fast-inner-loop-process-not-container) — Kestrel serves both http and https there, and an untrusted cert makes `dotnet test` / `aspire run` fail with `AuthenticationException: UntrustedRoot` | `dotnet dev-certs https --trust`, then click **Yes** on the Windows prompt (one-time, interactive — can't be scripted/automated) |
 
-Verify with `dotnet --version`, `aspire --version`, `docker info`, `dotnet dev-certs https --check --trust`.
+Verify with `dotnet --version`, `aspire --version`, `docker info`.
+
+Container parity is the only supported run mode now (no `RUN_*_AS_PROJECT` toggle): every app
+talks to its own `daprd` sidecar container by container-network name
+(`<app>-dapr:3500`/`:50001`), which only works when the app itself is also a container on that
+same network.
 
 ### Recommended Claude Code tooling for this repo
 
@@ -40,9 +133,6 @@ once per machine from an interactive Claude Code session:
 
 ## How this was scaffolded
 
-Every project file below was generated by `dotnet new` / `dotnet sln` / `dotnet add` — nothing
-was hand-authored. To reproduce or extend:
-
 ```powershell
 dotnet new sln -n AspireDemo
 dotnet new gitignore
@@ -50,72 +140,93 @@ dotnet new gitignore
 dotnet new aspire-apphost -o src/AspireDemo.AppHost -n AspireDemo.AppHost
 dotnet new aspire-servicedefaults -o src/AspireDemo.ServiceDefaults -n AspireDemo.ServiceDefaults
 dotnet new webapi -o src/AspireDemo.Api -n AspireDemo.Api
+dotnet new webapi -o src/AspireDemo.PaymentService -n AspireDemo.PaymentService
+dotnet new webapi -o src/AspireDemo.AnalyticsService -n AspireDemo.AnalyticsService
+dotnet new console -o src/AspireDemo.InventoryService -n AspireDemo.InventoryService
+dotnet new console -o src/AspireDemo.NotificationService -n AspireDemo.NotificationService
 dotnet new aspire-xunit -o tests/AspireDemo.Tests -n AspireDemo.Tests
 
-dotnet sln add src/AspireDemo.AppHost/AspireDemo.AppHost.csproj `
-  src/AspireDemo.ServiceDefaults/AspireDemo.ServiceDefaults.csproj `
-  src/AspireDemo.Api/AspireDemo.Api.csproj `
-  tests/AspireDemo.Tests/AspireDemo.Tests.csproj
+dotnet sln add (every .csproj above)
 
 dotnet add src/AspireDemo.Api reference src/AspireDemo.ServiceDefaults
-dotnet add src/AspireDemo.AppHost reference src/AspireDemo.Api
+# ...and the same for every other service project
+
+dotnet add src/AspireDemo.Api package Dapr.AspNetCore
+dotnet add src/AspireDemo.Api package Dapr.Workflow
+dotnet add src/AspireDemo.InventoryService package Dapr.Workflow
+dotnet add src/AspireDemo.InventoryService package Dapr.Client
+dotnet add src/AspireDemo.PaymentService package Dapr.AspNetCore
+dotnet add src/AspireDemo.AnalyticsService package Dapr.AspNetCore
+dotnet add src/AspireDemo.NotificationService package Dapr.Messaging
+
+dotnet add src/AspireDemo.AppHost package Aspire.Hosting.Redis
+dotnet add src/AspireDemo.AppHost package Aspire.Hosting.Kafka
+dotnet add src/AspireDemo.AppHost package Aspire.Hosting.Azure.Storage
 dotnet add src/AspireDemo.AppHost package WireMock.Net.Aspire
+dotnet add src/AspireDemo.AppHost reference (every service project)
+
 dotnet add tests/AspireDemo.Tests reference src/AspireDemo.AppHost
 ```
 
-Only `Program.cs` / `AppHost.cs` / the test file, and two container-image MSBuild properties in
-`AspireDemo.Api.csproj` (`ContainerRepository`, `ContainerImageTag` — needed so the AppHost's
-`AddContainer` reference is deterministic), were hand-edited afterwards.
+Everything under `Program.cs`/`AppHost.cs`/the workflow & activity classes/the test files, the two
+container-image MSBuild properties per service csproj (`ContainerRepository`, `ContainerImageTag`
+— needed so the AppHost's `AddContainer` references are deterministic), and `dapr/**/*.yaml`
+(binding/component metadata can't be scaffolded by any CLI) were hand-authored afterwards.
 
-## Running it — container parity by default
-
-Aspire containerizes the API using the **.NET SDK's built-in container build**
-(`Microsoft.NET.Build.Containers`, i.e. `dotnet publish -t:PublishContainer`) — **no Dockerfile**.
-That's the same mechanism Aspire uses at publish/deploy time, so by default this AppHost runs the
-API **locally as that same Linux container image**, so dev matches deploy:
+## Running it
 
 ```powershell
-# 1. Build the API's container image (re-run this after changing the API's code)
-dotnet publish src/AspireDemo.Api -c Release --os linux --arch x64 -t:PublishContainer
+# 1. Build every service's container image (re-run after changing any service's code)
+./build.ps1
 
-# 2. Run the AppHost — the API resource runs as the image built above; WireMock always runs
-#    as a container.
+# 2. Run the AppHost
 aspire run
 ```
 
-Open the Aspire dashboard link that's printed, and you should see `wiremock` and `api` both
-healthy. WireMock has no stubs configured yet in this mode (there are no static mapping files —
-see [Configuring stubs](#configuring-stubs-wiremock-admin-api) below), so calling `/forecast`
-will error until you configure one (WireMock returns 404 for the unmatched request, which the
-API surfaces as a 500).
+Open the Aspire dashboard link that's printed. You should see all 5 app containers, their 5
+`daprd` sidecars, `placement`, `scheduler`, `redis`, `kafka`, and `storage` (Azurite) come up
+healthy/running.
 
-### Fast inner loop (process, not container)
+WireMock has no stubs configured yet in this mode (there are no static mapping files - see
+[Configuring stubs](#configuring-stubs-wiremock-admin-api) below), so an order's shipping-quote
+step will fail until you configure one.
 
-For quicker iteration (hot reload, no image rebuild), run the API as a plain process instead:
+### Try it end-to-end
 
 ```powershell
-$env:RUN_API_AS_PROJECT = "true"
-aspire run
+# via the dashboard's endpoint for the "api" resource
+curl -X POST http://localhost:<api-port>/orders `
+  -H "Content-Type: application/json" `
+  -d '{"items":[{"sku":"widget-1","quantity":1}],"amount":25.00,"destinationPostalCode":"12345"}'
+
+curl http://localhost:<api-port>/orders/<orderId>
 ```
 
-This mode runs Kestrel with both http and https endpoints, so it needs the trusted dev
-certificate from [Prerequisites](#prerequisites) (`dotnet dev-certs https --trust`) — without it,
-you'll see `AuthenticationException: UntrustedRoot`.
+- **Workflow / state**: the order's `runtimeStatus` progresses `Running` -> `Completed`; inventory
+  stock for `widget-1` decrements in Redis.
+- **Service invocation**: payment-svc's logs show the charge call.
+- **Third-party call**: the shipping-quote activity hits WireMock (404s until you stub it - see
+  below).
+- **Blob binding**: once shipped, an invoice blob lands in Azurite's `invoices` container.
+- **Kafka binding**: analytics-svc's `GET /stats` total increments.
+- **Pub/sub**: notification-svc's logs show the order-lifecycle events.
+- **Failure path**: an order with `"amount": 100000` or more gets declined by payment-svc, so the
+  saga compensates - it releases the reserved stock back, and the order ends up `Failed`.
 
 ### Ship parity
 
-`aspire publish` generates deployment artifacts (e.g. a Docker Compose publisher target) using
-the same SDK container build. See `aspire publish --help` and the
+`aspire publish` generates deployment artifacts (e.g. a Docker Compose publisher target) using the
+same SDK container build. See `aspire publish --help` and the
 [Aspire deployment docs](https://aspire.dev) for the publisher that fits your target.
 
 ## Configuring stubs (WireMock admin API)
 
 This repo deliberately has **no static WireMock mapping files**. Stubs are registered at runtime
 against WireMock's admin API using `WireMock.Net.RestClient`'s `IWireMockAdminApi`. The
-integration test (`tests/AspireDemo.Tests/ForecastEndpointTests.cs`) is the reference example:
-it boots the AppHost, gets an admin client via
-`app.CreateWireMockAdminClient("wiremock", "http")`, posts a mapping for `GET /forecast`, and
-then asserts the API's own `/forecast` endpoint reflects it end-to-end.
+integration test (`tests/AspireDemo.Tests/OrderFulfillmentTests.cs`) is the reference example: it
+boots the AppHost, gets an admin client via `app.CreateWireMockAdminClient("wiremock", "http")`,
+posts a mapping for `GET /shipping-quote`, and then asserts the order it posts reflects that quote
+once shipped.
 
 To poke at it manually while `aspire run` is up, open the Aspire dashboard, find WireMock's
 endpoint URL, and `POST` a mapping to `{wiremockUrl}/__admin/mappings` (see the
@@ -127,13 +238,19 @@ endpoint URL, and `POST` a mapping to `{wiremockUrl}/__admin/mappings` (see the
 dotnet test
 ```
 
-The integration test boots the real AppHost, so:
-- In the default (container-parity) mode, **run the `dotnet publish -t:PublishContainer` step
-  above first** so the `aspiredemo-api:latest` image exists locally.
-- Or run it against the fast/process mode instead: `$env:RUN_API_AS_PROJECT = "true"; dotnet test`
-  — this additionally needs the trusted dev cert (see [Prerequisites](#prerequisites)).
+The integration test boots the real AppHost - all 14 containers - so **run `./build.ps1` first**
+so every `aspiredemo-*:latest` image exists locally. Docker Desktop's Linux engine must be
+running. Expect this to take a few minutes on a cold run (image pulls for `daprio/*`, `kafka`,
+`azurite`, plus catalog seeding retries while sidecars come up).
 
-Either way, Docker Desktop's Linux engine must be running (WireMock always runs as a container).
+## Open items / known trade-offs
 
-Both modes were verified end-to-end while building this repo: container-parity mode (`dotnet test`
-against the published image) passes; fast/process mode passes once the dev cert is trusted.
+- **`daprio/*` runtime tag**: pinned to `1.18.2` in `AppHost.cs` (`DaprRuntimeTag`) — bump it (and
+  the matching `Dapr.*` NuGet package versions) as new Dapr releases land.
+- **Kafka/Azurite internal ports**: the Dapr component yaml hardcodes `kafka:9093` (Aspire's Kafka
+  integration's `PLAINTEXT_INTERNAL` listener - *not* the `9092` primary listener, which advertises
+  a host-only `localhost:<random-port>` address that's unreachable from other containers) and
+  `storage:10000` as the container-network addresses (Aspire's host-side port mappings are random
+  and irrelevant here, since only other *containers* need to reach these by name). If a future
+  `Aspire.Hosting.Kafka`/`Aspire.Hosting.Azure.Storage` release changes these defaults, update the
+  yaml under `dapr/components/`.
