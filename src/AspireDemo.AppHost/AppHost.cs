@@ -42,6 +42,10 @@ var orderSvcDapr = AddDaprSidecar("api", appPort: 8080, extraComponentsDir: "ord
 var orderSvc = builder.AddContainer("api", "aspiredemo-api", "latest")
     .WithHttpEndpoint(targetPort: 8080)
     .WithReference(wiremock)
+    // The app services run as prebuilt containers (not AddProject), so they don't get Aspire's
+    // automatic OTLP wiring - opt each one in so ServiceDefaults exports to the dashboard and the
+    // Dapr sidecar spans have app spans to nest under.
+    .WithOtlpExporter()
     .WithDaprSidecarEndpoints("api")
     // inventory-svc has no app-channel of its own (see below) - order-svc talks straight to its
     // sidecar's HTTP API instead (see AspireDemo.Api/InventoryWorkflowClient.cs).
@@ -55,6 +59,7 @@ var inventorySvcDapr = AddDaprSidecar("inventory-svc", appPort: null, extraCompo
     .WaitFor(redis).WaitFor(placement).WaitFor(scheduler);
 
 var inventorySvc = builder.AddContainer("inventory-svc", "aspiredemo-inventory-svc", "latest")
+    .WithOtlpExporter()
     .WithDaprSidecarEndpoints("inventory-svc")
     .WaitFor(inventorySvcDapr);
 
@@ -64,6 +69,7 @@ var paymentSvcDapr = AddDaprSidecar("payment-svc", appPort: 8080, extraComponent
 
 var paymentSvc = builder.AddContainer("payment-svc", "aspiredemo-payment-svc", "latest")
     .WithHttpEndpoint(targetPort: 8080)
+    .WithOtlpExporter()
     .WithDaprSidecarEndpoints("payment-svc")
     .WaitFor(paymentSvcDapr);
 
@@ -73,6 +79,7 @@ var analyticsSvcDapr = AddDaprSidecar("analytics-svc", appPort: 8080, extraCompo
 
 var analyticsSvc = builder.AddContainer("analytics-svc", "aspiredemo-analytics-svc", "latest")
     .WithHttpEndpoint(targetPort: 8080)
+    .WithOtlpExporter()
     .WithDaprSidecarEndpoints("analytics-svc")
     .WaitFor(analyticsSvcDapr);
 
@@ -82,6 +89,7 @@ var notificationSvcDapr = AddDaprSidecar("notification-svc", appPort: null, extr
     .WaitFor(redis);
 
 var notificationSvc = builder.AddContainer("notification-svc", "aspiredemo-notification-svc", "latest")
+    .WithOtlpExporter()
     .WithDaprSidecarEndpoints("notification-svc")
     .WaitFor(notificationSvcDapr);
 
@@ -123,7 +131,16 @@ IResourceBuilder<ContainerResource> AddDaprSidecar(string appId, int? appPort, s
         sidecar = sidecar.WithBindMount($"../../dapr/components/{extraComponentsDir}", $"/components/{extraComponentsDir}", isReadOnly: true);
     }
 
-    return sidecar.WithArgs(args.ToArray());
+    return sidecar.WithArgs(args.ToArray())
+        // WithOtlpExporter isn't automatic for container resources (only AddProject gets it), so we
+        // opt these raw daprd containers in explicitly. It injects a container-network-reachable
+        // OTEL_EXPORTER_OTLP_ENDPOINT (+ OTEL_EXPORTER_OTLP_PROTOCOL=grpc), which daprd reads at
+        // startup via SetTracingSpecFromEnv - sidecar spans then land in the Aspire dashboard.
+        .WithOtlpExporter()
+        // daprd defaults its OTLP exporter to TLS (isSecure=true) and would attempt a TLS handshake
+        // against the dashboard's plaintext OTLP endpoint. Run the AppHost under its "http" launch
+        // profile (plaintext dashboard OTLP) and mark the hop insecure so the export succeeds.
+        .WithEnvironment("OTEL_EXPORTER_OTLP_INSECURE", "true");
 }
 
 // Points an app container at its own sidecar's HTTP/gRPC endpoints. The Dapr .NET SDK (DaprClient,

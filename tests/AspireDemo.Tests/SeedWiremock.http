@@ -1,0 +1,30 @@
+﻿### GET request to example server
+GET http://localhost:59557/__admin/mappings
+
+###
+POST http://localhost:59557/__admin/mappings
+Content-Type: application/json
+
+{
+    "Request": {
+        "Path": "/shipping-quote",
+        "Methods": ["GET"]
+    },
+    "Response": {
+        "StatusCode": 200,
+        "BodyAsJson": { "carrier": "Acme Freight", "cost": 12.50, "estimatedDays": 3 }
+    }
+}
+
+###
+POST http://localhost:59555/orders
+Content-Type: application/json
+
+{
+  "Items": [ { "Sku": "widget-1", "Quantity": 1 }],
+  "Amount": 25.00, 
+  "DestinationPostalCode": "12345"
+}
+
+###
+
