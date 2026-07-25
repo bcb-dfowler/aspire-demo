@@ -93,6 +93,20 @@ var notificationSvc = builder.AddContainer("notification-svc", "aspiredemo-notif
     .WithDaprSidecarEndpoints("notification-svc")
     .WaitFor(notificationSvcDapr);
 
+// Dapr only exposes metrics as a Prometheus scrape endpoint (:9090 on each sidecar), but the
+// Aspire dashboard ingests OTLP (push) only - it doesn't scrape. This collector bridges the gap:
+// it scrapes every sidecar and forwards the metrics over OTLP to the dashboard. .WithOtlpExporter()
+// injects the container-reachable dashboard endpoint, which otel-collector/config.yaml reads via
+// ${env:OTEL_EXPORTER_OTLP_ENDPOINT}. See otel-collector/config.yaml for the scrape targets.
+builder.AddContainer("otel-collector", "otel/opentelemetry-collector-contrib", "0.157.0")
+    .WithBindMount("../../otel-collector/config.yaml", "/etc/otelcol-contrib/config.yaml", isReadOnly: true)
+    .WithOtlpExporter()
+    .WaitFor(orderSvcDapr)
+    .WaitFor(inventorySvcDapr)
+    .WaitFor(paymentSvcDapr)
+    .WaitFor(analyticsSvcDapr)
+    .WaitFor(notificationSvcDapr);
+
 builder.Build().Run();
 
 // Builds a daprd sidecar container for `appId`. Every sidecar mounts the shared components

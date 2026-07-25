@@ -1,0 +1,50 @@
+# Bridges Dapr's metrics into the Aspire dashboard. Each daprd sidecar exposes a Prometheus
+# scrape endpoint on :9090, but the Aspire dashboard only *ingests* OTLP (push) - it does not
+# scrape Prometheus. This collector scrapes every sidecar and forwards the metrics over OTLP to
+# the dashboard's collector. Wired up by the "otel-collector" container in AppHost.cs.
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        # One job per sidecar. The prometheus receiver maps job_name -> the service.name resource
+        # attribute, so each sidecar appears as its own source in the dashboard's Metrics view.
+        # Targets are the sidecar container names on Aspire's shared container network (the same
+        # name-based addressing AppHost.cs already uses for DAPR_HTTP_ENDPOINT).
+        - job_name: api-dapr
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["api-dapr:9090"]
+        - job_name: inventory-svc-dapr
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["inventory-svc-dapr:9090"]
+        - job_name: payment-svc-dapr
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["payment-svc-dapr:9090"]
+        - job_name: analytics-svc-dapr
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["analytics-svc-dapr:9090"]
+        - job_name: notification-svc-dapr
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["notification-svc-dapr:9090"]
+
+processors:
+  batch: {}
+
+exporters:
+  otlp:
+    # Aspire injects this (container-reachable) via .WithOtlpExporter() on the collector container.
+    endpoint: ${env:OTEL_EXPORTER_OTLP_ENDPOINT}
+    tls:
+      # The dashboard's OTLP endpoint is plaintext under the AppHost's "http" launch profile.
+      insecure: true
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [batch]
+      exporters: [otlp]
