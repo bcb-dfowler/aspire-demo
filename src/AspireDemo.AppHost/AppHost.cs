@@ -73,12 +73,19 @@ var paymentSvc = builder.AddContainer("payment-svc", "aspiredemo-payment-svc", "
     .WithDaprSidecarEndpoints("payment-svc")
     .WaitFor(paymentSvcDapr);
 
-// analytics-svc: minimal API, a Kafka *input* binding consumer that aggregates order events.
+// analytics-svc: a Kafka *input* binding consumer that aggregates order events. Node.js edition -
+// a single dependency-free JS file (src/analytics-node/server.js) bind-mounted into a stock node
+// image and run directly, no build/npm install. Shows Aspire orchestrating a polyglot service
+// alongside the .NET ones, still wired through the same Dapr sidecar and Kafka input binding.
 var analyticsSvcDapr = AddDaprSidecar("analytics-svc", appPort: 8080, extraComponentsDir: "analytics-svc")
     .WaitFor(redis).WaitFor(kafka);
 
-var analyticsSvc = builder.AddContainer("analytics-svc", "aspiredemo-analytics-svc", "latest")
+var analyticsSvc = builder.AddContainer("analytics-svc", "node", "22-alpine")
+    .WithBindMount("../../src/analytics-node/server.js", "/app/server.js", isReadOnly: true)
+    .WithArgs("node", "/app/server.js")
     .WithHttpEndpoint(targetPort: 8080)
+    // Harmless here (the dependency-free JS ignores the injected OTEL_* env) but kept for parity
+    // with the other app containers and the sidecar OTLP story.
     .WithOtlpExporter()
     .WithDaprSidecarEndpoints("analytics-svc")
     .WaitFor(analyticsSvcDapr);

@@ -1,6 +1,5 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/AspireDemo.AnalyticsService/AspireDemo.AnalyticsService.csproj" />
     <Project Path="src/AspireDemo.Api/AspireDemo.Api.csproj" />
     <Project Path="src/AspireDemo.AppHost/AspireDemo.AppHost.csproj" />
     <Project Path="src/AspireDemo.InventoryService/AspireDemo.InventoryService.csproj" />

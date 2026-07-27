@@ -1,8 +1,8 @@
 ﻿### GET request to example server
-GET http://localhost:50359/__admin/mappings
+GET http://localhost:60227/__admin/mappings
 
 ###
-POST http://localhost:50359/__admin/mappings
+POST http://localhost:60227/__admin/mappings
 Content-Type: application/json
 
 {
@@ -17,7 +17,7 @@ Content-Type: application/json
 }
 
 ###
-POST http://localhost:50356/orders
+POST http://localhost:60223/orders
 Content-Type: application/json
 
 {

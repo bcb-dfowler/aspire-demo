@@ -2,8 +2,10 @@
 
 A Dapr showcase orchestrated locally by .NET Aspire: an **order-fulfillment saga** that exercises
 five Dapr building blocks - state management, pub/sub, workflow, an Azure Storage binding, and a
-Kafka binding - using only locally-runnable containers. No cloud services, no Dapr CLI, no
-Node.js. Prerequisites are Docker Desktop (Linux), the .NET 10 SDK, and the Aspire CLI.
+Kafka binding - using only locally-runnable containers. No cloud services and no Dapr CLI. One
+service (analytics-svc) is Node.js, but it runs from a stock `node` container image, so you 
+don't need Node.js installed locally. Prerequisites are Docker Desktop (Linux), the .NET 10 SDK,
+and the Aspire CLI.
 
 ## Scenario
 
@@ -19,7 +21,7 @@ and/or releasing the reserved stock.
 | **Pub/sub** | Redis | order-svc publishes order-lifecycle events; notification-svc subscribes via a streaming subscription |
 | **Workflow** | Dapr runtime (placement + scheduler) | order-svc hosts the fulfillment saga; inventory-svc hosts its own reserve/release-stock workflows, started remotely by order-svc via inventory-svc's sidecar HTTP API |
 | **Azure Storage binding** | Azurite | `bindings.azure.blobstorage` **output** binding writes an invoice document to a blob container |
-| **Kafka binding** | Redpanda-compatible Kafka (Confluent local image, via `Aspire.Hosting.Kafka`) | order-svc's **output** binding streams order events to a topic; analytics-svc's **input** binding consumes and aggregates them |
+| **Kafka binding** | Redpanda-compatible Kafka (Confluent local image, via `Aspire.Hosting.Kafka`) | order-svc's **output** binding streams order events to a topic; analytics-svc (a Node.js service) consumes and aggregates them via its **input** binding |
 
 ## Services
 
@@ -28,7 +30,7 @@ and/or releasing the reserved stock.
 | **`src/AspireDemo.Api`** (app-id `api`, the order-svc / front door) | ASP.NET Core minimal API | `POST /orders`, `GET /orders/{id}`; hosts the fulfillment **workflow**; **state** (order); **pub/sub** publish; **service invocation** -> payment-svc; calls inventory-svc's sidecar workflow API directly; **blob output binding** (invoice); **Kafka output binding** (order events); calls WireMock for the shipping quote |
 | **`src/AspireDemo.InventoryService`** (app-id `inventory-svc`) | Plain console app, no HTTP listener | **State** (stock, seeded on startup); hosts its own reserve/release-stock **workflows**, started remotely by order-svc via this app's own Dapr sidecar HTTP API (see below) |
 | **`src/AspireDemo.PaymentService`** (app-id `payment-svc`) | ASP.NET Core minimal API | `POST /charge`, `POST /refund`; a Dapr **service-invocation** target; **state** (idempotent charge records) |
-| **`src/AspireDemo.AnalyticsService`** (app-id `analytics-svc`) | ASP.NET Core minimal API | **Kafka input binding** consumer (`POST /order-events`); `GET /stats` exposes a running total |
+| **`src/analytics-node/server.js`** (app-id `analytics-svc`) | Node.js HTTP server (stock `node` image, single dependency-free file, no build/npm install) | **Kafka input binding** consumer (`POST /order-events`); `GET /stats` exposes a running total. A polyglot service orchestrated by Aspire alongside the .NET ones, still wired through its own Dapr sidecar |
 | **`src/AspireDemo.NotificationService`** (app-id `notification-svc`) | Plain console app, no HTTP listener | **Pub/sub** subscriber via a Dapr *streaming* subscription (`DaprPublishSubscribeClient.SubscribeAsync`) - logs order-lifecycle events |
 | **`src/AspireDemo.ServiceDefaults`** | Shared library | OpenTelemetry, health checks, service discovery, resilience - referenced by every service above |
 | **wiremock** (AppHost resource `wiremock`) | Container | Stands in for the third-party carrier/shipping-quote API called by the workflow |
@@ -52,7 +54,8 @@ every Dapr app has a web server. Two mechanisms don't:
   uses this as a **plain console app**.
 
 payment-svc and analytics-svc *are* reached via HTTP (service invocation and a Kafka input
-binding callback, respectively), so they're minimal ASP.NET Core APIs.
+binding callback, respectively), so they run a web server - payment-svc as a minimal ASP.NET Core
+API, analytics-svc as a small Node.js HTTP server.
 
 ## Infrastructure containers (Aspire-managed)
 
@@ -107,7 +110,7 @@ in `AspireDemo.InventoryService/CatalogSeeder.cs`, so the demo is deterministic 
 
 | Tool | Why | Install |
 |---|---|---|
-| **.NET 10 SDK** | Builds/runs everything; the .NET SDK also builds each service's container image (no Dockerfile) | https://dotnet.microsoft.com/download |
+| **.NET 10 SDK** | Builds/runs everything; the .NET SDK also builds each .NET service's container image (no Dockerfile). analytics-svc is Node.js but runs from the stock `node` image, so no local Node install is needed | https://dotnet.microsoft.com/download |
 | **Docker Desktop**, with its **Linux** engine running | Runs every container in this AppHost (14 in total: 5 apps, 5 `daprd` sidecars, redis, kafka, azurite, placement, scheduler) | https://www.docker.com/products/docker-desktop — after install, make sure it's running and switched to Linux containers |
 | **Aspire CLI** | `aspire run` / `aspire publish` etc. | `dotnet tool install --global Aspire.Cli` (or `irm https://aspire.dev/install.ps1 \| iex`) |
 | **Aspire project templates** | `aspire-apphost`, `aspire-servicedefaults`, `aspire-xunit` templates used to scaffold this repo | `dotnet new install Aspire.ProjectTemplates` |
@@ -141,7 +144,6 @@ dotnet new aspire-apphost -o src/AspireDemo.AppHost -n AspireDemo.AppHost
 dotnet new aspire-servicedefaults -o src/AspireDemo.ServiceDefaults -n AspireDemo.ServiceDefaults
 dotnet new webapi -o src/AspireDemo.Api -n AspireDemo.Api
 dotnet new webapi -o src/AspireDemo.PaymentService -n AspireDemo.PaymentService
-dotnet new webapi -o src/AspireDemo.AnalyticsService -n AspireDemo.AnalyticsService
 dotnet new console -o src/AspireDemo.InventoryService -n AspireDemo.InventoryService
 dotnet new console -o src/AspireDemo.NotificationService -n AspireDemo.NotificationService
 dotnet new aspire-xunit -o tests/AspireDemo.Tests -n AspireDemo.Tests
@@ -156,7 +158,6 @@ dotnet add src/AspireDemo.Api package Dapr.Workflow
 dotnet add src/AspireDemo.InventoryService package Dapr.Workflow
 dotnet add src/AspireDemo.InventoryService package Dapr.Client
 dotnet add src/AspireDemo.PaymentService package Dapr.AspNetCore
-dotnet add src/AspireDemo.AnalyticsService package Dapr.AspNetCore
 dotnet add src/AspireDemo.NotificationService package Dapr.Messaging
 
 dotnet add src/AspireDemo.AppHost package Aspire.Hosting.Redis
@@ -169,14 +170,17 @@ dotnet add tests/AspireDemo.Tests reference src/AspireDemo.AppHost
 ```
 
 Everything under `Program.cs`/`AppHost.cs`/the workflow & activity classes/the test files, the two
-container-image MSBuild properties per service csproj (`ContainerRepository`, `ContainerImageTag`
-— needed so the AppHost's `AddContainer` references are deterministic), and `dapr/**/*.yaml`
-(binding/component metadata can't be scaffolded by any CLI) were hand-authored afterwards.
+container-image MSBuild properties per .NET service csproj (`ContainerRepository`,
+`ContainerImageTag` — needed so the AppHost's `AddContainer` references are deterministic),
+`src/analytics-node/server.js` (the Node.js analytics-svc, bind-mounted into a stock `node`
+container - no scaffolding, no build), and `dapr/**/*.yaml` (binding/component metadata can't be
+scaffolded by any CLI) were hand-authored afterwards.
 
 ## Running it
 
 ```powershell
-# 1. Build every service's container image (re-run after changing any service's code)
+# 1. Build every .NET service's container image (re-run after changing any .NET service's code).
+# analytics-svc (Node.js) needs no build - its server.js is bind-mounted into a stock node image.
 ./build.ps1
 
 # 2. Run the AppHost
@@ -239,9 +243,10 @@ dotnet test
 ```
 
 The integration test boots the real AppHost - all 14 containers - so **run `./build.ps1` first**
-so every `aspiredemo-*:latest` image exists locally. Docker Desktop's Linux engine must be
-running. Expect this to take a few minutes on a cold run (image pulls for `daprio/*`, `kafka`,
-`azurite`, plus catalog seeding retries while sidecars come up).
+so every `aspiredemo-*:latest` image exists locally (analytics-svc runs the pulled stock `node`
+image instead, no build needed). Docker Desktop's Linux engine must be running. Expect this to take
+a few minutes on a cold run (image pulls for `daprio/*`, `kafka`, `azurite`, `node`, plus catalog
+seeding retries while sidecars come up).
 
 ## Open items / known trade-offs
 

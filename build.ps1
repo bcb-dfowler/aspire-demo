@@ -7,7 +7,6 @@ $services = @(
     "src/AspireDemo.Api",
     "src/AspireDemo.InventoryService",
     "src/AspireDemo.PaymentService",
-    "src/AspireDemo.AnalyticsService",
     "src/AspireDemo.NotificationService"
 )
 
