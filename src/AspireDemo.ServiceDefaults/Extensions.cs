@@ -68,8 +68,8 @@ public static class Extensions
                             !context.Request.Path.StartsWithSegments(HealthEndpointPath)
                             && !context.Request.Path.StartsWithSegments(AlivenessEndpointPath)
                     )
-                    // Uncomment the following line to enable gRPC instrumentation (requires the OpenTelemetry.Instrumentation.GrpcNetClient package)
-                    //.AddGrpcClientInstrumentation()
+                    // gRPC client spans - order-svc's payment calls travel over gRPC (via Dapr proxying).
+                    .AddGrpcClientInstrumentation()
                     .AddHttpClientInstrumentation();
             });
 

@@ -1,24 +1,26 @@
-using Dapr.Client;
+using AspireDemo.PaymentGrpc;
 using Dapr.Workflow;
+using Grpc.Core;
 
 namespace AspireDemo.Api;
 
 public sealed record RefundPaymentRequest(string OrderId);
 
 /// <summary>
-/// Compensating activity: refunds a previously charged payment via Dapr service invocation to
-/// payment-svc. Best-effort - logs rather than throws, since compensation itself should not fail
-/// the saga.
+/// Compensating activity: refunds a previously charged payment via a gRPC call to payment-svc,
+/// routed through Dapr gRPC proxying. Best-effort - logs rather than throws, since compensation
+/// itself should not fail the saga.
 /// </summary>
-public sealed class RefundPaymentActivity(DaprClient daprClient, ILogger<RefundPaymentActivity> logger) : WorkflowActivity<RefundPaymentRequest, object?>
+public sealed class RefundPaymentActivity(Payment.PaymentClient paymentClient, ILogger<RefundPaymentActivity> logger) : WorkflowActivity<RefundPaymentRequest, object?>
 {
+    // Instructs the local Dapr sidecar to proxy this gRPC call to the "payment-svc" app.
+    private static readonly Metadata DaprInvocationHeaders = new() { { "dapr-app-id", "payment-svc" } };
+
     public override async Task<object?> RunAsync(WorkflowActivityContext context, RefundPaymentRequest input)
     {
         try
         {
-#pragma warning disable CS0618
-            await daprClient.InvokeMethodAsync(HttpMethod.Post, "payment-svc", "refund", input);
-#pragma warning restore CS0618
+            await paymentClient.RefundAsync(new RefundRequest { OrderId = input.OrderId }, DaprInvocationHeaders);
         }
         catch (Exception ex)
         {

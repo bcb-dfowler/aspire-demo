@@ -27,6 +27,13 @@ builder.Services.AddHttpClient<InventoryWorkflowClient>(client =>
 
 builder.Services.AddDaprClient();
 
+// payment-svc is now a gRPC service reached through Dapr gRPC proxying: point the generated client
+// at this app's OWN sidecar's gRPC endpoint (DAPR_GRPC_ENDPOINT, injected by the AppHost), and the
+// activities add a "dapr-app-id: payment-svc" header per call so daprd forwards it. Plaintext h2c -
+// no TLS between app and sidecar.
+builder.Services.AddGrpcClient<AspireDemo.PaymentGrpc.Payment.PaymentClient>(options =>
+    options.Address = new Uri(builder.Configuration["DAPR_GRPC_ENDPOINT"] ?? "http://localhost:50001"));
+
 builder.Services.AddDaprWorkflow(options =>
 {
     options.RegisterWorkflow<OrderFulfillmentWorkflow>();

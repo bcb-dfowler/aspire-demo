@@ -63,8 +63,9 @@ var inventorySvc = builder.AddContainer("inventory-svc", "aspiredemo-inventory-s
     .WithDaprSidecarEndpoints("inventory-svc")
     .WaitFor(inventorySvcDapr);
 
-// payment-svc: minimal API, a Dapr service-invocation target for charge/refund.
-var paymentSvcDapr = AddDaprSidecar("payment-svc", appPort: 8080, extraComponentsDir: null)
+// payment-svc: a gRPC service, invoked by order-svc through Dapr gRPC proxying. The sidecar must
+// run with --app-protocol grpc so daprd speaks HTTP/2 to the app channel (see AddDaprSidecar).
+var paymentSvcDapr = AddDaprSidecar("payment-svc", appPort: 8080, extraComponentsDir: null, appProtocol: "grpc")
     .WaitFor(redis);
 
 var paymentSvc = builder.AddContainer("payment-svc", "aspiredemo-payment-svc", "latest")
@@ -121,7 +122,7 @@ builder.Build().Run();
 // dapr/components/{extraComponentsDir} - used for bindings that must NOT be loaded by every
 // sidecar (see the comment in dapr/components/order-svc/order-events.yaml). Apps with no HTTP
 // app-channel (inventory-svc, notification-svc - see their Program.cs) pass appPort: null.
-IResourceBuilder<ContainerResource> AddDaprSidecar(string appId, int? appPort, string? extraComponentsDir)
+IResourceBuilder<ContainerResource> AddDaprSidecar(string appId, int? appPort, string? extraComponentsDir, string appProtocol = "http")
 {
     List<string> args =
     [
@@ -138,6 +139,12 @@ IResourceBuilder<ContainerResource> AddDaprSidecar(string appId, int? appPort, s
     if (appPort is { } port)
     {
         args.AddRange(["--app-port", port.ToString(), "--app-channel-address", appId]);
+        // Defaults to http; pass "grpc" for services whose app channel is gRPC (payment-svc), so
+        // daprd talks HTTP/2 to the app and gRPC service-invocation proxying works.
+        if (appProtocol != "http")
+        {
+            args.AddRange(["--app-protocol", appProtocol]);
+        }
     }
 
     // Bind mount sources are relative to this AppHost project's directory (src/AspireDemo.AppHost),

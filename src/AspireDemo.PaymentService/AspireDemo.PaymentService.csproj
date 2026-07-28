@@ -6,6 +6,11 @@
 
   <ItemGroup>
     <PackageReference Include="Dapr.AspNetCore" Version="1.18.4" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.80.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Protos\payment.proto" GrpcServices="Server" />
   </ItemGroup>
 
   <PropertyGroup>

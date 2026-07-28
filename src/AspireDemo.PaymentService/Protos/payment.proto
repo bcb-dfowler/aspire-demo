@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+option csharp_namespace = "AspireDemo.PaymentGrpc";
+
+package payment;
+
+// The payment service, reached by order-svc through Dapr gRPC proxying (the caller sets a
+// "dapr-app-id: payment-svc" header on a channel to its own sidecar's gRPC port). Mirrors the
+// old /charge and /refund minimal-API contract, without a shared project - the two independently
+// deployable services only agree on this wire shape.
+service Payment {
+  rpc Charge (ChargeRequest) returns (ChargeReply);
+  rpc Refund (RefundRequest) returns (RefundReply);
+}
+
+// Amount is an invariant-culture decimal string - protobuf has no decimal type, and a string
+// preserves the exact value and the >= 100,000 decline-threshold comparison.
+message ChargeRequest {
+  string order_id = 1;
+  string amount = 2;
+}
+
+message ChargeReply {
+  bool success = 1;
+  string transaction_id = 2;
+  string reason = 3;
+}
+
+message RefundRequest {
+  string order_id = 1;
+}
+
+message RefundReply {
+}

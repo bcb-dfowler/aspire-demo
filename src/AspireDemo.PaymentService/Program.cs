@@ -1,15 +1,18 @@
 using AspireDemo.PaymentService;
-using Dapr.Client;
-
-const string StateStore = "statestore";
-
-// Demo failure trigger: orders at or above this amount are declined, so the saga's compensation
-// path (release inventory) has something to exercise end-to-end.
-const decimal DeclineThreshold = 100_000m;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
+
+// This service is reached over gRPC (via Dapr gRPC proxying), so its app channel must speak
+// HTTP/2. The container endpoint is plaintext, so serve h2c: Kestrel can't multiplex HTTP/1.1 and
+// HTTP/2 on one plaintext port, so the app port is HTTP/2-only. Dapr health-checks the app over
+// its own channel, and nothing here depends on the HTTP/1.1 health endpoints being reachable.
+builder.WebHost.ConfigureKestrel(options =>
+    options.ConfigureEndpointDefaults(listen => listen.Protocols = HttpProtocols.Http2));
+
+builder.Services.AddGrpc();
 
 builder.Services.AddDaprClient();
 
@@ -17,28 +20,6 @@ var app = builder.Build();
 
 app.MapDefaultEndpoints();
 
-app.MapPost("/charge", async (ChargeRequest request, DaprClient dapr, CancellationToken cancellationToken) =>
-{
-    var key = $"payment:{request.OrderId}";
-
-    var existing = await dapr.GetStateAsync<PaymentResult>(StateStore, key, cancellationToken: cancellationToken);
-    if (existing is not null)
-    {
-        return Results.Ok(existing);
-    }
-
-    var result = request.Amount > 0 && request.Amount < DeclineThreshold
-        ? new PaymentResult(true, Guid.NewGuid().ToString("N"), Reason: null)
-        : new PaymentResult(false, TransactionId: null, Reason: "declined");
-
-    await dapr.SaveStateAsync(StateStore, key, result, cancellationToken: cancellationToken);
-    return Results.Ok(result);
-}).WithName("ChargePayment");
-
-app.MapPost("/refund", async (RefundRequest request, DaprClient dapr, CancellationToken cancellationToken) =>
-{
-    await dapr.DeleteStateAsync(StateStore, $"payment:{request.OrderId}", cancellationToken: cancellationToken);
-    return Results.Ok();
-}).WithName("RefundPayment");
+app.MapGrpcService<PaymentGrpcService>();
 
 app.Run();
